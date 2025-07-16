@@ -11,7 +11,7 @@
     <style>
         body {
             font-family: 'Inter', sans-serif;
-            touch-action: manipulation;
+            touch-action: manipulation; /* Prevents default touch actions like pinch-zoom, improving game control */
         }
         .lora {
             font-family: 'Lora', serif;
@@ -41,12 +41,12 @@
             box-sizing: border-box;
         }
         #outline-container {
-            pointer-events: none;
+            pointer-events: none; /* Allows clicks/touches to pass through to the grid below */
         }
         .word-outline {
             position: absolute;
-            border: 3px solid #EF4444;
-            border-radius: 9999px;
+            border: 3px solid #EF4444; /* Red outline for found words */
+            border-radius: 9999px; /* Pill shape */
             box-sizing: border-box;
             transform-origin: center;
         }
@@ -66,11 +66,11 @@
             z-index: 1;
         }
         .selecting {
-            background-color: #FBBF24;
+            background-color: #FBBF24; /* Amber color for active selection */
             color: #1F2937;
         }
         .first-click {
-            background-color: #FDE68A;
+            background-color: #FDE68A; /* Lighter amber for the first cell in a click-click selection */
             color: #1F2937;
         }
         .word-list-item.found {
@@ -127,6 +127,7 @@
         </main>
     </div>
 
+    <!-- Rules Modal -->
     <div id="rules-modal" class="modal-backdrop">
         <div class="bg-white rounded-2xl shadow-2xl w-11/12 max-w-md m-4 transform transition-all modal-content-box" id="rules-content">
             <div class="p-8 text-center">
@@ -153,6 +154,7 @@
         </div>
     </div>
 
+    <!-- Definition Modal -->
     <div id="definition-modal" class="modal-backdrop hidden">
         <div class="bg-white rounded-2xl shadow-2xl w-11/12 max-w-md m-4 transform transition-all modal-content-box" id="modal-content">
             <div class="p-8">
@@ -166,6 +168,7 @@
         </div>
     </div>
     
+    <!-- Win Modal -->
     <div id="win-modal" class="modal-backdrop hidden">
         <div class="bg-white rounded-2xl shadow-2xl w-11/12 max-w-md m-4 transform transition-all p-8 text-center">
              <h3 class="text-4xl font-bold lora text-emerald-600 mb-4">Félicitations!</h3>
@@ -179,6 +182,7 @@
 
     <script>
     document.addEventListener('DOMContentLoaded', () => {
+        // --- DOM Element References ---
         const gridWrapper = document.getElementById('game-grid-wrapper');
         const gridElement = document.getElementById('game-grid');
         const outlineContainer = document.getElementById('outline-container');
@@ -193,6 +197,9 @@
         const rulesModal = document.getElementById('rules-modal');
         const startGameBtn = document.getElementById('start-game-btn');
 
+        // --- Database of Words ---
+        // This array contains the data for the word search. Each object has a 'term' (the word to find)
+        // and 'info' (the description shown when the word is found).
         const wordData = [
             { term: "Grenache", info: { description: "The backbone of the blend, allowed in Noir, Gris, & Blanc versions - it provides warmth, roundness, body, and generous flavors of red fruits like strawberry and raspberry, along with spicy notes." } },
             { term: "Mourvèdre", info: { description: "A key structural component - it brings deep color, strong tannins, and complex aromas of dark fruit, leather, and game, enhancing the wine's aging potential." } },
@@ -211,6 +218,7 @@
             { term: "Terret Noir", info: { description: "For freshness and acidity; though light in color and body, it is valued for its high acidity and fresh red fruit aromas, helping to balance the power of other grapes." } }
         ];
         
+        // --- Game State Variables ---
         const GRID_SIZE = 25;
         let grid = [];
         let words = [];
@@ -219,28 +227,43 @@
         let foundWords = new Set();
         let firstClickCell = null;
         
+        // Consolidated state for mouse, touch, and panning interactions
         let activeState = {
-            isDown: false,
-            isDragging: false,
-            isPanning: false,
+            isDown: false,      // Is the mouse button or a finger down?
+            isDragging: false,  // Is a selection drag in progress?
+            isPanning: false,     // Is a two-finger pan in progress?
             panStart: { x: 0, y: 0 },
             scrollStart: { left: 0, top: 0 },
         };
 
-        function sanitizeWord(word) {
-            const normalized = word.term.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+        // --- Core Game Logic ---
+
+        /**
+         * Cleans and standardizes a word for placement in the grid.
+         * Removes accents, non-alphabetic characters, and converts to uppercase.
+         * @param {object} wordObject - The word object from wordData, e.g., { term: "Grenache", ... }
+         * @returns {string} The sanitized word, e.g., "GRENACHE".
+         */
+        function sanitizeWord(wordObject) {
+            // NOTE: This function ONLY uses the 'term' property from the object.
+            const normalized = wordObject.term.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
             return normalized.toUpperCase().replace(/[^A-Z]/g, '');
         }
 
+        /**
+         * Initializes or resets the entire game.
+         */
         function initializeGame() {
             foundWords.clear();
             words = JSON.parse(JSON.stringify(wordData));
+            // Create a sanitized version of each word for grid placement and checking.
             words.forEach(w => w.sanitized = sanitizeWord(w));
             
             outlineContainer.innerHTML = '';
             clearFirstClickHighlight();
             firstClickCell = null;
             
+            // Attempt to place all words in the grid, retrying if it fails.
             let allWordsPlaced = false;
             let placementAttempts = 0;
             while(!allWordsPlaced && placementAttempts < 20) {
@@ -253,6 +276,7 @@
             }
             if(!allWordsPlaced) {
                 console.error("Failed to place all words after multiple attempts.");
+                // A user-friendly message box would be better than alert in a real app.
                 alert("Error: Could not create the word search. Please try reloading.");
             }
 
@@ -269,6 +293,7 @@
 
         function placeWordsInGrid() {
             const directions = [ { x: 1, y: 0 }, { x: -1, y: 0 }, { x: 0, y: 1 }, { x: 0, y: -1 }, { x: 1, y: 1 }, { x: -1, y: -1 }, { x: 1, y: -1 }, { x: -1, y: 1 } ];
+            // Sort words by length, longest first, to increase placement success rate.
             const sortedWords = [...words].sort((a, b) => b.sanitized.length - a.sanitized.length);
 
             for (const wordObj of sortedWords) {
@@ -319,6 +344,8 @@
             for (let r = 0; r < GRID_SIZE; r++) for (let c = 0; c < GRID_SIZE; c++) if (grid[r][c] === null) grid[r][c] = alphabet[Math.floor(Math.random() * alphabet.length)];
         }
 
+        // --- Rendering Functions ---
+
         function renderGrid() {
             gridElement.innerHTML = '';
             gridElement.style.gridTemplateColumns = `repeat(${GRID_SIZE}, 1fr)`;
@@ -347,66 +374,61 @@
             });
         }
         
-        function getCellFromEvent(touchOrMouseEvent) {
-            let target;
-            if (touchOrMouseEvent.touches) {
-                 // It's a touch event, get coordinates from the first touch
-                const touch = touchOrMouseEvent.touches[0];
-                target = document.elementFromPoint(touch.clientX, touch.clientY);
+        // --- Event Handling ---
+
+        /**
+         * **FIXED**: Accurately determines the grid cell from a mouse or touch event.
+         * This now calculates position relative to the grid element, making it reliable
+         * even when the grid is scrolled.
+         * @param {MouseEvent|TouchEvent} event - The input event.
+         * @returns {object|null} A cell object {row, col, element} or null if outside the grid.
+         */
+        function getCellFromEvent(event) {
+            const gridRect = gridElement.getBoundingClientRect();
+            let clientX, clientY;
+
+            // Determine coordinates from either a mouse or touch event
+            if (event.touches && event.touches.length > 0) {
+                clientX = event.touches[0].clientX;
+                clientY = event.touches[0].clientY;
+            } else if (event.changedTouches && event.changedTouches.length > 0) { // For touchend
+                clientX = event.changedTouches[0].clientX;
+                clientY = event.changedTouches[0].clientY;
             } else {
-                // It's a mouse event
-                target = touchOrMouseEvent.target;
+                clientX = event.clientX;
+                clientY = event.clientY;
             }
-            const cellElement = target ? target.closest('.grid-cell') : null;
-            if (!cellElement) return null;
-            return { row: parseInt(cellElement.dataset.row), col: parseInt(cellElement.dataset.col), element: cellElement };
-        }
 
-        // --- MOUSE EVENT HANDLERS ---
-        function handleMouseDown(e) {
-            e.preventDefault();
-            const cell = getCellFromEvent(e);
-            if (!cell) return;
-            activeState.isDown = true;
-            selectionStart = cell;
-            selectionEnd = cell;
-        }
+            // Calculate coordinates relative to the grid element's content box
+            const x = clientX - gridRect.left;
+            const y = clientY - gridRect.top;
 
-        function handleMouseMove(e) {
-            if (!activeState.isDown) return;
-            e.preventDefault();
-            activeState.isDragging = true;
-            const cell = getCellFromEvent(e);
-            if (cell && (cell.row !== selectionEnd.row || cell.col !== selectionEnd.col)) {
-                selectionEnd = cell;
-                clearFirstClickHighlight();
-                firstClickCell = null;
-                highlightSelection();
+            // Calculate row and column based on the position
+            const col = Math.floor(x / (gridElement.offsetWidth / GRID_SIZE));
+            const row = Math.floor(y / (gridElement.offsetHeight / GRID_SIZE));
+
+            // Boundary check to ensure the coordinates are within the grid
+            if (row < 0 || row >= GRID_SIZE || col < 0 || col >= GRID_SIZE) {
+                return null;
             }
+
+            const cellElement = gridElement.querySelector(`[data-row='${row}'][data-col='${col}']`);
+            return cellElement ? { row, col, element: cellElement } : null;
         }
 
-        function handleMouseUp(e) {
-            if (!activeState.isDown) return;
-            e.preventDefault();
-            if (activeState.isDragging) {
-                checkSelection();
-                clearSelectionHighlights();
-            } else {
-                handleCellClick(selectionStart);
-            }
-            activeState.isDown = false;
-            activeState.isDragging = false;
-        }
-
-        // --- TOUCH EVENT HANDLERS ---
-        function handleTouchStart(e) {
-            if (e.touches.length === 1) {
-                e.preventDefault();
+        // --- MOUSE & TOUCH INPUT HANDLERS ---
+        
+        function handleInteractionStart(e) {
+            // Handle single touch for selection
+            if (e.type === 'touchstart' && e.touches.length === 1) {
+                e.preventDefault(); // Prevent screen from scrolling while selecting
                 activeState.isDown = true;
                 activeState.isDragging = false;
                 selectionStart = getCellFromEvent(e);
                 selectionEnd = selectionStart;
-            } else if (e.touches.length === 2) {
+            } 
+            // Handle two-finger touch for panning
+            else if (e.type === 'touchstart' && e.touches.length === 2) {
                 e.preventDefault();
                 activeState.isPanning = true;
                 const t1 = e.touches[0];
@@ -414,10 +436,20 @@
                 activeState.panStart = { x: (t1.clientX + t2.clientX) / 2, y: (t1.clientY + t2.clientY) / 2 };
                 activeState.scrollStart = { left: gridWrapper.scrollLeft, top: gridWrapper.scrollTop };
             }
+            // Handle mouse down for selection
+            else if (e.type === 'mousedown') {
+                 e.preventDefault();
+                 const cell = getCellFromEvent(e);
+                 if (!cell) return;
+                 activeState.isDown = true;
+                 selectionStart = cell;
+                 selectionEnd = cell;
+            }
         }
 
-        function handleTouchMove(e) {
-            if (activeState.isPanning && e.touches.length === 2) {
+        function handleInteractionMove(e) {
+            // Handle two-finger pan
+            if (activeState.isPanning && e.touches && e.touches.length === 2) {
                 e.preventDefault();
                 const t1 = e.touches[0];
                 const t2 = e.touches[1];
@@ -426,7 +458,9 @@
                 const dy = currentPan.y - activeState.panStart.y;
                 gridWrapper.scrollLeft = activeState.scrollStart.left - dx;
                 gridWrapper.scrollTop = activeState.scrollStart.top - dy;
-            } else if (activeState.isDown && e.touches.length === 1) {
+            } 
+            // Handle selection drag (mouse or single touch)
+            else if (activeState.isDown) {
                 e.preventDefault();
                 activeState.isDragging = true;
                 const cell = getCellFromEvent(e);
@@ -439,27 +473,36 @@
             }
         }
 
-        function handleTouchEnd(e) {
+        function handleInteractionEnd(e) {
+            if (!activeState.isDown && !activeState.isPanning) return;
+            e.preventDefault();
+
             if (activeState.isPanning) {
                 activeState.isPanning = false;
             } else if (activeState.isDown) {
                 if (activeState.isDragging) {
+                    // This was a drag-selection
                     checkSelection();
                     clearSelectionHighlights();
                 } else {
+                    // This was a simple tap/click
                     handleCellClick(selectionStart);
                 }
             }
+            // Reset all interaction states
             activeState.isDown = false;
             activeState.isDragging = false;
+            activeState.isPanning = false;
         }
 
         function handleCellClick(cell) {
             if (!cell) return;
             if (!firstClickCell) {
+                // First click of a potential two-click selection
                 firstClickCell = cell;
                 if (cell.element) cell.element.classList.add('first-click');
             } else {
+                // Second click, completing the selection
                 selectionStart = firstClickCell;
                 selectionEnd = cell;
                 checkSelection();
@@ -492,11 +535,13 @@
             let { row: r1, col: c1 } = start;
             let { row: r2, col: c2 } = end;
             const dx = Math.abs(c2 - c1), dy = Math.abs(r2 - r1);
+            // Check for horizontal, vertical, or diagonal lines
             if (r1 === r2 || c1 === c2 || dx === dy) {
                 const sx = Math.sign(c2 - c1), sy = Math.sign(r2 - r1);
                 const steps = Math.max(dx, dy);
                 for (let i = 0; i <= steps; i++) cells.push({ row: r1 + i * sy, col: c1 + i * sx });
             } else {
+                // Not a valid line, just return the start cell
                 cells.push({ row: r1, col: c1 });
             }
             return cells;
@@ -508,6 +553,7 @@
             const selEnd = selectionEnd;
             const wordFound = words.find(w => {
                 if (!w.placed || foundWords.has(w.sanitized)) return false;
+                // Check if selection matches word's start/end points, either forward or backward
                 const forwardMatch = (selStart.row === w.start.row && selStart.col === w.start.col && selEnd.row === w.end.row && selEnd.col === w.end.col);
                 const backwardMatch = (selStart.row === w.end.row && selStart.col === w.end.col && selEnd.row === w.start.row && selEnd.col === w.start.col);
                 return forwardMatch || backwardMatch;
@@ -556,14 +602,13 @@
 
         function showDefinitionModal(word) {
             modalWord.textContent = word.term;
-            modalInfo.innerHTML = `
-                <p class="text-gray-600 text-base leading-relaxed">${word.info.description}</p>
-            `;
+            modalInfo.innerHTML = `<p class="text-gray-600 text-base leading-relaxed">${word.info.description}</p>`;
             definitionModal.classList.remove('hidden');
         }
 
         function hideDefinitionModal() {
             definitionModal.classList.add('hidden');
+            // Check for win condition after closing the modal
             if (foundWords.size === words.filter(w => w.placed).length) {
                 setTimeout(() => winModal.classList.remove('hidden'), 200);
             }
@@ -574,6 +619,7 @@
             initializeGame();
         }
 
+        // --- Event Listeners ---
         resetButton.addEventListener('click', initializeGame);
         modalContinueBtn.addEventListener('click', hideDefinitionModal);
         winNewGameBtn.addEventListener('click', resetAndStartNewGame);
@@ -583,14 +629,17 @@
             initializeGame();
         });
 
-        gridWrapper.addEventListener('mousedown', handleMouseDown);
-        gridWrapper.addEventListener('mousemove', handleMouseMove);
-        document.addEventListener('mouseup', handleMouseUp);
+        // Mouse events
+        gridWrapper.addEventListener('mousedown', handleInteractionStart);
+        gridWrapper.addEventListener('mousemove', handleInteractionMove);
+        // Listen on document for mouseup to catch drags that end outside the grid
+        document.addEventListener('mouseup', handleInteractionEnd);
         
-        gridWrapper.addEventListener('touchstart', handleTouchStart, { passive: false });
-        gridWrapper.addEventListener('touchmove', handleTouchMove, { passive: false });
-        gridWrapper.addEventListener('touchend', handleTouchEnd);
-        gridWrapper.addEventListener('touchcancel', handleTouchEnd);
+        // Touch events
+        gridWrapper.addEventListener('touchstart', handleInteractionStart, { passive: false });
+        gridWrapper.addEventListener('touchmove', handleInteractionMove, { passive: false });
+        gridWrapper.addEventListener('touchend', handleInteractionEnd);
+        gridWrapper.addEventListener('touchcancel', handleInteractionEnd);
 
     });
     </script>
