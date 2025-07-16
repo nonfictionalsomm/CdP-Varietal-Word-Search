@@ -198,8 +198,6 @@
         const startGameBtn = document.getElementById('start-game-btn');
 
         // --- Database of Words ---
-        // This array contains the data for the word search. Each object has a 'term' (the word to find)
-        // and 'info' (the description shown when the word is found).
         const wordData = [
             { term: "Grenache", info: { description: "The backbone of the blend, allowed in Noir, Gris, & Blanc versions - it provides warmth, roundness, body, and generous flavors of red fruits like strawberry and raspberry, along with spicy notes." } },
             { term: "Mourvèdre", info: { description: "A key structural component - it brings deep color, strong tannins, and complex aromas of dark fruit, leather, and game, enhancing the wine's aging potential." } },
@@ -227,43 +225,33 @@
         let foundWords = new Set();
         let firstClickCell = null;
         
-        // Consolidated state for mouse, touch, and panning interactions
+        // **FIXED**: Consolidated and improved state for all user interactions.
         let activeState = {
-            isDown: false,      // Is the mouse button or a finger down?
-            isDragging: false,  // Is a selection drag in progress?
-            isPanning: false,     // Is a two-finger pan in progress?
+            isDown: false,
+            isDragging: false,
+            isPanning: false,
             panStart: { x: 0, y: 0 },
             scrollStart: { left: 0, top: 0 },
+            interactionStartCoords: { x: 0, y: 0 }, // Stores coordinates at the start of an interaction.
+            dragThreshold: 5 // The number of pixels the cursor must move to be considered a drag.
         };
 
         // --- Core Game Logic ---
 
-        /**
-         * Cleans and standardizes a word for placement in the grid.
-         * Removes accents, non-alphabetic characters, and converts to uppercase.
-         * @param {object} wordObject - The word object from wordData, e.g., { term: "Grenache", ... }
-         * @returns {string} The sanitized word, e.g., "GRENACHE".
-         */
         function sanitizeWord(wordObject) {
-            // NOTE: This function ONLY uses the 'term' property from the object.
             const normalized = wordObject.term.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
             return normalized.toUpperCase().replace(/[^A-Z]/g, '');
         }
 
-        /**
-         * Initializes or resets the entire game.
-         */
         function initializeGame() {
             foundWords.clear();
             words = JSON.parse(JSON.stringify(wordData));
-            // Create a sanitized version of each word for grid placement and checking.
             words.forEach(w => w.sanitized = sanitizeWord(w));
             
             outlineContainer.innerHTML = '';
             clearFirstClickHighlight();
             firstClickCell = null;
             
-            // Attempt to place all words in the grid, retrying if it fails.
             let allWordsPlaced = false;
             let placementAttempts = 0;
             while(!allWordsPlaced && placementAttempts < 20) {
@@ -276,7 +264,6 @@
             }
             if(!allWordsPlaced) {
                 console.error("Failed to place all words after multiple attempts.");
-                // A user-friendly message box would be better than alert in a real app.
                 alert("Error: Could not create the word search. Please try reloading.");
             }
 
@@ -293,7 +280,6 @@
 
         function placeWordsInGrid() {
             const directions = [ { x: 1, y: 0 }, { x: -1, y: 0 }, { x: 0, y: 1 }, { x: 0, y: -1 }, { x: 1, y: 1 }, { x: -1, y: -1 }, { x: 1, y: -1 }, { x: -1, y: 1 } ];
-            // Sort words by length, longest first, to increase placement success rate.
             const sortedWords = [...words].sort((a, b) => b.sanitized.length - a.sanitized.length);
 
             for (const wordObj of sortedWords) {
@@ -376,18 +362,10 @@
         
         // --- Event Handling ---
 
-        /**
-         * **FIXED**: Accurately determines the grid cell from a mouse or touch event.
-         * This now calculates position relative to the grid element, making it reliable
-         * even when the grid is scrolled.
-         * @param {MouseEvent|TouchEvent} event - The input event.
-         * @returns {object|null} A cell object {row, col, element} or null if outside the grid.
-         */
         function getCellFromEvent(event) {
             const gridRect = gridElement.getBoundingClientRect();
             let clientX, clientY;
 
-            // Determine coordinates from either a mouse or touch event
             if (event.touches && event.touches.length > 0) {
                 clientX = event.touches[0].clientX;
                 clientY = event.touches[0].clientY;
@@ -399,15 +377,12 @@
                 clientY = event.clientY;
             }
 
-            // Calculate coordinates relative to the grid element's content box
             const x = clientX - gridRect.left;
             const y = clientY - gridRect.top;
 
-            // Calculate row and column based on the position
             const col = Math.floor(x / (gridElement.offsetWidth / GRID_SIZE));
             const row = Math.floor(y / (gridElement.offsetHeight / GRID_SIZE));
 
-            // Boundary check to ensure the coordinates are within the grid
             if (row < 0 || row >= GRID_SIZE || col < 0 || col >= GRID_SIZE) {
                 return null;
             }
@@ -416,40 +391,50 @@
             return cellElement ? { row, col, element: cellElement } : null;
         }
 
-        // --- MOUSE & TOUCH INPUT HANDLERS ---
-        
+        // **FIXED**: New unified input handlers for mouse and touch.
+
+        /**
+         * Handles the start of any interaction (mousedown or touchstart).
+         * Differentiates between selection-start and pan-start.
+         */
         function handleInteractionStart(e) {
-            // Handle single touch for selection
-            if (e.type === 'touchstart' && e.touches.length === 1) {
-                e.preventDefault(); // Prevent screen from scrolling while selecting
-                activeState.isDown = true;
-                activeState.isDragging = false;
-                selectionStart = getCellFromEvent(e);
-                selectionEnd = selectionStart;
-            } 
-            // Handle two-finger touch for panning
-            else if (e.type === 'touchstart' && e.touches.length === 2) {
+            if (e.type === 'touchstart' && e.touches.length === 2) {
+                // --- Start of a Two-Finger Pan ---
                 e.preventDefault();
                 activeState.isPanning = true;
+                activeState.isDown = false; // Cancel any potential single-touch selection
                 const t1 = e.touches[0];
                 const t2 = e.touches[1];
                 activeState.panStart = { x: (t1.clientX + t2.clientX) / 2, y: (t1.clientY + t2.clientY) / 2 };
                 activeState.scrollStart = { left: gridWrapper.scrollLeft, top: gridWrapper.scrollTop };
+                return;
             }
-            // Handle mouse down for selection
-            else if (e.type === 'mousedown') {
-                 e.preventDefault();
-                 const cell = getCellFromEvent(e);
-                 if (!cell) return;
-                 activeState.isDown = true;
-                 selectionStart = cell;
-                 selectionEnd = cell;
+
+            // --- Start of a Mouse Down or Single-Finger Touch ---
+            const cell = getCellFromEvent(e);
+            if (!cell) return;
+            
+            e.preventDefault();
+            activeState.isDown = true;
+            activeState.isDragging = false; // Reset dragging state
+            selectionStart = cell;
+            selectionEnd = cell;
+
+            // Record starting coordinates for drag threshold check
+            if (e.touches) {
+                activeState.interactionStartCoords = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+            } else {
+                activeState.interactionStartCoords = { x: e.clientX, y: e.clientY };
             }
         }
 
+        /**
+         * Handles movement during an interaction (mousemove or touchmove).
+         * Differentiates between dragging and panning.
+         */
         function handleInteractionMove(e) {
-            // Handle two-finger pan
-            if (activeState.isPanning && e.touches && e.touches.length === 2) {
+            if (activeState.isPanning) {
+                if (!e.touches || e.touches.length !== 2) return;
                 e.preventDefault();
                 const t1 = e.touches[0];
                 const t2 = e.touches[1];
@@ -458,21 +443,45 @@
                 const dy = currentPan.y - activeState.panStart.y;
                 gridWrapper.scrollLeft = activeState.scrollStart.left - dx;
                 gridWrapper.scrollTop = activeState.scrollStart.top - dy;
-            } 
-            // Handle selection drag (mouse or single touch)
-            else if (activeState.isDown) {
+                return;
+            }
+
+            if (activeState.isDown) {
                 e.preventDefault();
-                activeState.isDragging = true;
-                const cell = getCellFromEvent(e);
-                if (cell && selectionEnd && (cell.row !== selectionEnd.row || cell.col !== selectionEnd.col)) {
-                    selectionEnd = cell;
-                    clearFirstClickHighlight();
-                    firstClickCell = null;
-                    highlightSelection();
+                
+                if (!activeState.isDragging) {
+                    let currentX, currentY;
+                    if (e.touches) {
+                        currentX = e.touches[0].clientX;
+                        currentY = e.touches[0].clientY;
+                    } else {
+                        currentX = e.clientX;
+                        currentY = e.clientY;
+                    }
+                    const dist = Math.hypot(currentX - activeState.interactionStartCoords.x, currentY - activeState.interactionStartCoords.y);
+                    
+                    if (dist > activeState.dragThreshold) {
+                        activeState.isDragging = true;
+                        // It's a drag, so clear any pending click-click state
+                        clearFirstClickHighlight();
+                        firstClickCell = null;
+                    }
+                }
+
+                if (activeState.isDragging) {
+                    const cell = getCellFromEvent(e);
+                    if (cell && selectionEnd && (cell.row !== selectionEnd.row || cell.col !== selectionEnd.col)) {
+                        selectionEnd = cell;
+                        highlightSelection();
+                    }
                 }
             }
         }
 
+        /**
+         * Handles the end of any interaction (mouseup or touchend).
+         * Differentiates between a click, a drag, and a pan.
+         */
         function handleInteractionEnd(e) {
             if (!activeState.isDown && !activeState.isPanning) return;
             e.preventDefault();
@@ -481,28 +490,45 @@
                 activeState.isPanning = false;
             } else if (activeState.isDown) {
                 if (activeState.isDragging) {
-                    // This was a drag-selection
+                    // End of a drag-selection
                     checkSelection();
                     clearSelectionHighlights();
                 } else {
-                    // This was a simple tap/click
-                    handleCellClick(selectionStart);
+                    // End of a tap/click
+                    const cell = getCellFromEvent(e);
+                    handleCellClick(cell);
                 }
             }
+            
             // Reset all interaction states
             activeState.isDown = false;
             activeState.isDragging = false;
-            activeState.isPanning = false;
         }
-
+        
+        /**
+         * Handles the logic for a confirmed click/tap on a cell.
+         * Manages the state for the two-click selection method.
+         */
         function handleCellClick(cell) {
-            if (!cell) return;
+            if (!cell) {
+                // User clicked outside the grid, cancel any pending click-click
+                clearFirstClickHighlight();
+                firstClickCell = null;
+                return;
+            }
+
             if (!firstClickCell) {
-                // First click of a potential two-click selection
+                // This is the first click
                 firstClickCell = cell;
                 if (cell.element) cell.element.classList.add('first-click');
             } else {
-                // Second click, completing the selection
+                // This is the second click
+                if (firstClickCell.row === cell.row && firstClickCell.col === cell.col) {
+                    // User clicked the same cell twice, so cancel the selection
+                    clearFirstClickHighlight();
+                    firstClickCell = null;
+                    return;
+                }
                 selectionStart = firstClickCell;
                 selectionEnd = cell;
                 checkSelection();
@@ -535,13 +561,11 @@
             let { row: r1, col: c1 } = start;
             let { row: r2, col: c2 } = end;
             const dx = Math.abs(c2 - c1), dy = Math.abs(r2 - r1);
-            // Check for horizontal, vertical, or diagonal lines
             if (r1 === r2 || c1 === c2 || dx === dy) {
                 const sx = Math.sign(c2 - c1), sy = Math.sign(r2 - r1);
                 const steps = Math.max(dx, dy);
                 for (let i = 0; i <= steps; i++) cells.push({ row: r1 + i * sy, col: c1 + i * sx });
             } else {
-                // Not a valid line, just return the start cell
                 cells.push({ row: r1, col: c1 });
             }
             return cells;
@@ -553,7 +577,6 @@
             const selEnd = selectionEnd;
             const wordFound = words.find(w => {
                 if (!w.placed || foundWords.has(w.sanitized)) return false;
-                // Check if selection matches word's start/end points, either forward or backward
                 const forwardMatch = (selStart.row === w.start.row && selStart.col === w.start.col && selEnd.row === w.end.row && selEnd.col === w.end.col);
                 const backwardMatch = (selStart.row === w.end.row && selStart.col === w.end.col && selEnd.row === w.start.row && selEnd.col === w.start.col);
                 return forwardMatch || backwardMatch;
@@ -608,7 +631,6 @@
 
         function hideDefinitionModal() {
             definitionModal.classList.add('hidden');
-            // Check for win condition after closing the modal
             if (foundWords.size === words.filter(w => w.placed).length) {
                 setTimeout(() => winModal.classList.remove('hidden'), 200);
             }
@@ -632,7 +654,6 @@
         // Mouse events
         gridWrapper.addEventListener('mousedown', handleInteractionStart);
         gridWrapper.addEventListener('mousemove', handleInteractionMove);
-        // Listen on document for mouseup to catch drags that end outside the grid
         document.addEventListener('mouseup', handleInteractionEnd);
         
         // Touch events
