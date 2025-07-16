@@ -225,15 +225,14 @@
         let foundWords = new Set();
         let firstClickCell = null;
         
-        // **FIXED**: Consolidated and improved state for all user interactions.
         let activeState = {
             isDown: false,
             isDragging: false,
             isPanning: false,
             panStart: { x: 0, y: 0 },
             scrollStart: { left: 0, top: 0 },
-            interactionStartCoords: { x: 0, y: 0 }, // Stores coordinates at the start of an interaction.
-            dragThreshold: 5 // The number of pixels the cursor must move to be considered a drag.
+            interactionStartCoords: { x: 0, y: 0 },
+            dragThreshold: 5 
         };
 
         // --- Core Game Logic ---
@@ -362,10 +361,18 @@
         
         // --- Event Handling ---
 
+        /**
+         * **FIXED**: Calculates the precise grid cell from a mouse or touch event.
+         * This version uses a direct mathematical approach, accounting for the container's
+         * scroll position, which is far more accurate than elementFromPoint.
+         * @param {MouseEvent|TouchEvent} event - The input event.
+         * @returns {object|null} A cell object {row, col, element} or null if outside the grid.
+         */
         function getCellFromEvent(event) {
-            const gridRect = gridElement.getBoundingClientRect();
+            const wrapperRect = gridWrapper.getBoundingClientRect();
             let clientX, clientY;
 
+            // Determine coordinates from either a mouse or touch event
             if (event.touches && event.touches.length > 0) {
                 clientX = event.touches[0].clientX;
                 clientY = event.touches[0].clientY;
@@ -377,12 +384,15 @@
                 clientY = event.clientY;
             }
 
-            const x = clientX - gridRect.left;
-            const y = clientY - gridRect.top;
+            // Calculate coordinates relative to the grid *content*, including scroll offsets
+            const xInGrid = clientX - wrapperRect.left + gridWrapper.scrollLeft;
+            const yInGrid = clientY - wrapperRect.top + gridWrapper.scrollTop;
+            
+            // Calculate row and column based on the precise position within the grid
+            const col = Math.floor(xInGrid / (gridElement.offsetWidth / GRID_SIZE));
+            const row = Math.floor(yInGrid / (gridElement.offsetHeight / GRID_SIZE));
 
-            const col = Math.floor(x / (gridElement.offsetWidth / GRID_SIZE));
-            const row = Math.floor(y / (gridElement.offsetHeight / GRID_SIZE));
-
+            // Boundary check to ensure the coordinates are within the grid
             if (row < 0 || row >= GRID_SIZE || col < 0 || col >= GRID_SIZE) {
                 return null;
             }
@@ -391,18 +401,11 @@
             return cellElement ? { row, col, element: cellElement } : null;
         }
 
-        // **FIXED**: New unified input handlers for mouse and touch.
-
-        /**
-         * Handles the start of any interaction (mousedown or touchstart).
-         * Differentiates between selection-start and pan-start.
-         */
         function handleInteractionStart(e) {
             if (e.type === 'touchstart' && e.touches.length === 2) {
-                // --- Start of a Two-Finger Pan ---
                 e.preventDefault();
                 activeState.isPanning = true;
-                activeState.isDown = false; // Cancel any potential single-touch selection
+                activeState.isDown = false;
                 const t1 = e.touches[0];
                 const t2 = e.touches[1];
                 activeState.panStart = { x: (t1.clientX + t2.clientX) / 2, y: (t1.clientY + t2.clientY) / 2 };
@@ -410,17 +413,15 @@
                 return;
             }
 
-            // --- Start of a Mouse Down or Single-Finger Touch ---
             const cell = getCellFromEvent(e);
             if (!cell) return;
             
             e.preventDefault();
             activeState.isDown = true;
-            activeState.isDragging = false; // Reset dragging state
+            activeState.isDragging = false;
             selectionStart = cell;
             selectionEnd = cell;
 
-            // Record starting coordinates for drag threshold check
             if (e.touches) {
                 activeState.interactionStartCoords = { x: e.touches[0].clientX, y: e.touches[0].clientY };
             } else {
@@ -428,10 +429,6 @@
             }
         }
 
-        /**
-         * Handles movement during an interaction (mousemove or touchmove).
-         * Differentiates between dragging and panning.
-         */
         function handleInteractionMove(e) {
             if (activeState.isPanning) {
                 if (!e.touches || e.touches.length !== 2) return;
@@ -462,7 +459,6 @@
                     
                     if (dist > activeState.dragThreshold) {
                         activeState.isDragging = true;
-                        // It's a drag, so clear any pending click-click state
                         clearFirstClickHighlight();
                         firstClickCell = null;
                     }
@@ -478,10 +474,6 @@
             }
         }
 
-        /**
-         * Handles the end of any interaction (mouseup or touchend).
-         * Differentiates between a click, a drag, and a pan.
-         */
         function handleInteractionEnd(e) {
             if (!activeState.isDown && !activeState.isPanning) return;
             e.preventDefault();
@@ -490,41 +482,30 @@
                 activeState.isPanning = false;
             } else if (activeState.isDown) {
                 if (activeState.isDragging) {
-                    // End of a drag-selection
                     checkSelection();
                     clearSelectionHighlights();
                 } else {
-                    // End of a tap/click
                     const cell = getCellFromEvent(e);
                     handleCellClick(cell);
                 }
             }
             
-            // Reset all interaction states
             activeState.isDown = false;
             activeState.isDragging = false;
         }
         
-        /**
-         * Handles the logic for a confirmed click/tap on a cell.
-         * Manages the state for the two-click selection method.
-         */
         function handleCellClick(cell) {
             if (!cell) {
-                // User clicked outside the grid, cancel any pending click-click
                 clearFirstClickHighlight();
                 firstClickCell = null;
                 return;
             }
 
             if (!firstClickCell) {
-                // This is the first click
                 firstClickCell = cell;
                 if (cell.element) cell.element.classList.add('first-click');
             } else {
-                // This is the second click
                 if (firstClickCell.row === cell.row && firstClickCell.col === cell.col) {
-                    // User clicked the same cell twice, so cancel the selection
                     clearFirstClickHighlight();
                     firstClickCell = null;
                     return;
@@ -667,3 +648,4 @@
 
 </body>
 </html>
+
